@@ -1,0 +1,58 @@
+# Full-stack compose for the GCP VM.
+#
+# Typical usage on the VM:
+#   docker compose up -d postgres mailpit       # DB + email catcher only
+#   docker compose up -d                         # everything including the app
+#
+# The local dev workflow runs the app outside Docker (uvicorn --reload) and
+# only needs `postgres` (and optionally `mailpit`) running remotely on the VM.
+
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-virtuagym}
+      POSTGRES_USER: ${POSTGRES_USER:-virtuagym}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-virtuagym}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-virtuagym} -d ${POSTGRES_DB:-virtuagym}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "1025:1025"   # SMTP
+      - "8025:8025"   # Web UI
+    environment:
+      MP_MAX_MESSAGES: "5000"
+
+  app:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+    env_file:
+      - .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-virtuagym}:${POSTGRES_PASSWORD:-virtuagym}@postgres:5432/${POSTGRES_DB:-virtuagym}
+      SMTP_HOST: mailpit
+      SMTP_PORT: "1025"
+    ports:
+      - "8000:8000"
+    volumes:
+      - app_uploads:/app/uploads
+
+volumes:
+  postgres_data:
+  app_uploads:
